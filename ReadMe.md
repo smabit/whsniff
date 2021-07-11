@@ -12,6 +12,8 @@ This utility only works on Linux (including OpenWrt). For Windows download and i
 
 Whsniff reads the packets from TI CC2531 USB dongle with [`sniffer_fw_cc2531` firmware](http://www.ti.com/tool/packet-sniffer), converts to the PCAP format and writes to the standard output(stdout).
 
+**Modfified version allowing to set the interval to create a new file in seconds. Fork from https://github.com/homewsn/whsniff.**
+
 
 ##### Building (Linux)
 
@@ -76,10 +78,13 @@ $ path/to/whsniff -c channel_number > filename.pcap
 ```sh
 $ path/to/whsniff -c channel_number -f
 ```
-* You can also let whsniff save the output to a file, and automatically restart sniffing every hour (-h) or day (-d) so that a single file is not too huge
+* You can also let whsniff save the output to a file, and automatically restart sniffing every (-r <seconds>) so that a single file is not too huge
 ```sh
-$ path/to/whsniff -c channel_number -f -h
-$ path/to/whsniff -c channel_number -f -d
+$ path/to/whsniff -c channel_number -f -r 120
+```
+* You can use optional parameter (-p <prefix>) in order to specifiy the prefix prepended to the file name.
+```sh
+$ path/to/whsniff -c channel_number -f -p my_trace
 ```
 * You can also keep the original FCS sent by the CC2531 through the -k option. The original FCS contains the RSSI and LQI. It can be interpreted by wireshark as a "TI CC24xx FCS format":
 ```sh

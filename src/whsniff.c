@@ -98,7 +98,6 @@ static volatile unsigned int signal_exit = 0;
 static uint16_t update_crc_ccitt(uint16_t crc, uint8_t c);
 static uint16_t ieee802154_crc16(uint8_t *tvb, uint32_t offset, uint32_t len);
 
-
 //--------------------------------------------
 static int packet_handler(unsigned char *buf, int cnt, uint8_t keep_original_fcs, FILE * file)
 {
@@ -214,14 +213,13 @@ void signal_handler(int sig)
 //--------------------------------------------
 void print_usage()
 {
-    printf("Usage: whsniff -c <channel> [-k] [-f] [-h] [-d]\n");
+    printf("Usage: zb-sniffer -c <channel> [-r <seconds]> [-k] [-f] [-p <file-prefix>]\n");
     printf("\n");
     printf("Where\n");
     printf("\t-c <channel> - Zigbee channel number (11 to 26)\n");
+	printf("\t-r <seconds> - Interval to start a new file (used with -f)\n");
     printf("\t-k - keep the original FCS sent by the CC2531\n");
     printf("\t-f - dump to file instead of stdout (handy for long sniffs with -h/-d options)\n");
-    printf("\t-h - start a new dump file evey hour (used with -f)\n");
-    printf("\t-d - start a new dump file evey day (used with -f)\n");
 }
 
 
@@ -349,14 +347,14 @@ void close_usb_sniffer(libusb_device_handle *handle)
 }
 
 //--------------------------------------------
-FILE * restart_pcap_file(FILE * prev_file, uint8_t restart_hourly, uint8_t restart_daily)
+FILE * restart_pcap_file(FILE * prev_file, long restart, time_t *last_time, char *prefix)
 {
-	static int last_hour = -1;
-	static int last_day = -1;
 	static int stdout_header_written = 0;
-
 	FILE * file = prev_file;
+	time_t now = time(NULL);
+	struct tm tm = *localtime(&now);
 
+	
 	// print PCAP header to stdout only once
 	if(file == stdout)
 	{
@@ -372,20 +370,13 @@ FILE * restart_pcap_file(FILE * prev_file, uint8_t restart_hourly, uint8_t resta
 		return file;
 	}
 
-	time_t t = time(NULL);
-	struct tm tm = *localtime(&t);
-
-	// No need to restart if hour has not yet changed
-	if(restart_hourly && last_hour == tm.tm_hour)
-		return file;
-
-	// No need to restart if day has not yet changed
-	if(restart_daily && last_day == tm.tm_mday)
+	// No need to restart if time passed is lower than restart seconds
+	//printf("last_time: %d, now: %d, restart: %d\n", *last_time, now, restart);
+	if(last_time && restart && (now - *last_time) < restart)
 		return file;
 
 	// Store last hour/day
-	last_hour = tm.tm_hour;
-	last_day = tm.tm_mday;
+	*last_time = time(NULL);
 
 	// Close previous file
 	if(file)
@@ -393,8 +384,7 @@ FILE * restart_pcap_file(FILE * prev_file, uint8_t restart_hourly, uint8_t resta
 
 	// ... and open a new one
 	char filename[100];
-	sprintf(filename, "whsniff-%d-%02d-%02d-%02d-%02d-%02d.pcap", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-
+	sprintf(filename, "%s-%d-%02d-%02d-%02d-%02d-%02d.pcap", prefix, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 	fprintf(stderr, "Sniffing to %s\n", filename);
 	file = fopen(filename, "wb");
 
@@ -411,13 +401,14 @@ int main(int argc, char *argv[])
 	uint8_t channel = 0;
 	uint8_t keep_original_fcs = 0;
 	uint8_t dump_to_file = 0;
-	uint8_t restart_hourly = 0;
-	uint8_t restart_daily = 0;
+	long restart = 0;
 	int option;
+	char *prefix = "zb-sniffer";
 	static unsigned char usb_buf[BUF_SIZE];
 	static int usb_cnt;
 	static unsigned char recv_buf[2 * BUF_SIZE];
 	static int recv_cnt;
+	time_t last_time = 0;
 
 	FILE * file = NULL;
 
@@ -429,15 +420,14 @@ int main(int argc, char *argv[])
 	signal(SIGPIPE, signal_handler);
 
 	option = 0;
-	while ((option = getopt(argc, argv, "c:kfhd")) != -1)
+	while ((option = getopt(argc, argv, "c:p:r:kf")) != -1)
 	{
 		switch (option)
 		{
 			case 'c':
 				channel = (uint8_t)atoi(optarg);
 				if (channel < 11 || channel > 26)
-				{
-					
+				{					
 					exit(EXIT_FAILURE);
 				}
 				break;
@@ -447,11 +437,15 @@ int main(int argc, char *argv[])
 			case 'f':
 				dump_to_file = 1;
 				break;
-			case 'h':
-				restart_hourly = 1;
+			case 'r':
+				restart = (long)atoi(optarg);
+				if (restart < 1)
+				{					
+					exit(EXIT_FAILURE);
+				}
 				break;
-			case 'd':
-				restart_daily = 1;
+			case 'p':
+				prefix = optarg;				
 				break;
 			default:
 				print_usage();
@@ -474,8 +468,8 @@ int main(int argc, char *argv[])
 
 	while (!signal_exit)
 	{
-		// restart new PCAP file (if needed)
-		file = restart_pcap_file(dump_to_file ? file /*Open new file*/ : stdout, restart_hourly, restart_daily);
+		// restart new PCAP file (if needed)	
+		file = restart_pcap_file(dump_to_file ? file /*Open new file*/ : stdout, restart, &last_time, prefix);
 
 		// Receive and process a piece of data from USB
 		int res = libusb_bulk_transfer(handle, 0x83, (unsigned char *)&usb_buf, BUF_SIZE, &usb_cnt, 10000);
